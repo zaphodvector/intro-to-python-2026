@@ -1,4 +1,17 @@
-
+"""
+----------------------------------------------------------------------------------------------------------
+    Name:		EHS_CPT13501_Week10_VacationPlanner
+    Author:		Elijah Schultz
+    Language:	Python
+    Date:		2026-05-04
+    Purpose:	The purpose of this program is to
+----------------------------------------------------------------------------------------------------------
+    Change Log
+----------------------------------------------------------------------------------------------------------
+    Who		Date		Reason
+    EHS		2026-05-04	Original Version of Code
+----------------------------------------------------------------------------------------------------------
+"""
 def fncGetUserInput(prompt):
     userInput = ""
     while userInput == "":
@@ -57,4 +70,5 @@ def main():
     print("Average Daily Budget: $" + format(dailyBudget, ",.2f"))
 
 
-main()
+if __name__ == "__main__":
+    main()

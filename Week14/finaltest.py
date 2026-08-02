@@ -11,6 +11,7 @@ Controls:
   STOP/PLAY     : toggle audio
 """
 
+import random
 import threading
 import numpy as np
 import sounddevice as sd
@@ -28,11 +29,11 @@ A4_HZ   = 440.0
 
 # ── Audio state (shared between UI thread and audio callback) ─────────────
 state = {
-    "midi":     69,       # semitone index (MIDI note number)
-    "cents":    0.0,      # fine tune offset in cents
-    "waveform": "sine",
-    "playing":  True,
-    "phase":    0.0,      # continuous phase accumulator
+    "midi":        69,    # semitone index (MIDI note number)
+    "drift_cents": 0.0,   # actual pitch offset in cents (randomized on note change, user-adjustable via fine tune)
+    "waveform":    "sine",
+    "playing":     True,
+    "phase":       0.0,   # continuous phase accumulator
 }
 state_lock = threading.Lock()
 
@@ -50,17 +51,17 @@ def midi_to_name(midi):
 
 def audio_callback(outdata, frames, time_info, status):
     with state_lock:
-        playing  = state["playing"]
-        midi     = state["midi"]
-        cents    = state["cents"]
-        waveform = state["waveform"]
-        phase    = state["phase"]
+        playing      = state["playing"]
+        midi         = state["midi"]
+        drift_cents  = state["drift_cents"]
+        waveform     = state["waveform"]
+        phase        = state["phase"]
 
     if not playing:
         outdata[:] = 0
         return
 
-    freq  = midi_to_hz(midi, cents)
+    freq  = midi_to_hz(midi, drift_cents)
     omega = 2.0 * np.pi * freq / SAMPLE_RATE
     t     = phase + omega * np.arange(frames)
 
@@ -127,39 +128,46 @@ class Display:
         bg.setWidth(2)
         bg.draw(win)
         cx = (x1+x2)/2
-        self.note_txt = Text(Point(cx, y1+30), "A4")
+        self.note_txt = Text(Point(cx, y1+26), "A4")
         self.note_txt.setTextColor(DISPLAY_TXT)
-        self.note_txt.setSize(28)
+        self.note_txt.setSize(26)
         self.note_txt.setStyle("bold")
         self.note_txt.draw(win)
 
-        self.hz_txt = Text(Point(cx, y1+60), "440.00 Hz")
+        self.hz_txt = Text(Point(cx, y1+52), "Target: 440.00 Hz")
         self.hz_txt.setTextColor(DISPLAY_TXT)
-        self.hz_txt.setSize(14)
+        self.hz_txt.setSize(11)
         self.hz_txt.draw(win)
 
-        self.cents_txt = Text(Point(cx, y1+80), "±0 cents")
+        self.actual_hz_txt = Text(Point(cx, y1+66), "Actual:  440.00 Hz")
+        self.actual_hz_txt.setTextColor(color_rgb(255, 180, 80))
+        self.actual_hz_txt.setSize(11)
+        self.actual_hz_txt.draw(win)
+
+        self.cents_txt = Text(Point(cx, y1+82), "±0 cents")
         self.cents_txt.setTextColor(color_rgb(160, 220, 180))
-        self.cents_txt.setSize(11)
+        self.cents_txt.setSize(10)
         self.cents_txt.draw(win)
 
-        self.wave_txt = Text(Point(cx, y1+100), "▶ sine")
+        self.wave_txt = Text(Point(cx, y1+96), "▶ sine")
         self.wave_txt.setTextColor(ACCENT)
-        self.wave_txt.setSize(11)
+        self.wave_txt.setSize(10)
         self.wave_txt.draw(win)
 
-        self.status_txt = Text(Point(cx, y1+120), "● PLAYING")
+        self.status_txt = Text(Point(cx, y1+112), "● PLAYING")
         self.status_txt.setTextColor(color_rgb(100,255,100))
         self.status_txt.setSize(10)
         self.status_txt.draw(win)
 
-    def update(self, midi, cents, waveform, playing):
-        hz   = midi_to_hz(midi, cents)
+    def update(self, midi, drift_cents, waveform, playing):
+        target_hz = midi_to_hz(midi, 0)
+        actual_hz = midi_to_hz(midi, drift_cents)
         name = midi_to_name(midi)
         self.note_txt.setText(name)
-        self.hz_txt.setText(f"{hz:.2f} Hz")
-        sign = "+" if cents >= 0 else ""
-        self.cents_txt.setText(f"{sign}{cents:.0f} cents")
+        self.hz_txt.setText(f"Target: {target_hz:.2f} Hz")
+        self.actual_hz_txt.setText(f"Actual:  {actual_hz:.2f} Hz")
+        sign = "+" if drift_cents >= 0 else ""
+        self.cents_txt.setText(f"{sign}{drift_cents:.0f} cents")
         self.wave_txt.setText(f"▶ {waveform}")
         if playing:
             self.status_txt.setText("● PLAYING")
@@ -249,8 +257,8 @@ def main():
     # ── Event loop --------------------------------------------------------
     def refresh():
         with state_lock:
-            m, c, wf, pl = state["midi"], state["cents"], state["waveform"], state["playing"]
-        disp.update(m, c, wf, pl)
+            m, d, wf, pl = state["midi"], state["drift_cents"], state["waveform"], state["playing"]
+        disp.update(m, d, wf, pl)
         # waveform button highlights
         for w, b in wf_btns.items():
             b.set_bg(BTN_HOVER if w == wf else BTN_IDLE)
@@ -266,23 +274,31 @@ def main():
         changed = True
 
         if btn_oct_dn.clicked(pt):
-            with state_lock: state["midi"] = max(0,  state["midi"] - 12)
+            with state_lock:
+                state["midi"] = max(0,  state["midi"] - 12)
+                state["drift_cents"] = random.uniform(-20, 20)
         elif btn_oct_up.clicked(pt):
-            with state_lock: state["midi"] = min(127, state["midi"] + 12)
+            with state_lock:
+                state["midi"] = min(127, state["midi"] + 12)
+                state["drift_cents"] = random.uniform(-20, 20)
         elif btn_note_dn.clicked(pt):
-            with state_lock: state["midi"] = max(0,  state["midi"] - 1)
+            with state_lock:
+                state["midi"] = max(0,  state["midi"] - 1)
+                state["drift_cents"] = random.uniform(-20, 20)
         elif btn_note_up.clicked(pt):
-            with state_lock: state["midi"] = min(127, state["midi"] + 1)
+            with state_lock:
+                state["midi"] = min(127, state["midi"] + 1)
+                state["drift_cents"] = random.uniform(-20, 20)
         elif btn_fine_dn10.clicked(pt):
-            with state_lock: state["cents"] = max(-100, state["cents"] - 10)
+            with state_lock: state["drift_cents"] = max(-50, state["drift_cents"] - 10)
         elif btn_fine_dn1.clicked(pt):
-            with state_lock: state["cents"] = max(-100, state["cents"] - 1)
+            with state_lock: state["drift_cents"] = max(-50, state["drift_cents"] - 1)
         elif btn_fine_up1.clicked(pt):
-            with state_lock: state["cents"] = min(100, state["cents"] + 1)
+            with state_lock: state["drift_cents"] = min(50, state["drift_cents"] + 1)
         elif btn_fine_up10.clicked(pt):
-            with state_lock: state["cents"] = min(100, state["cents"] + 10)
+            with state_lock: state["drift_cents"] = min(50, state["drift_cents"] + 10)
         elif btn_reset.clicked(pt):
-            with state_lock: state["cents"] = 0.0
+            with state_lock: state["drift_cents"] = 0.0
         elif btn_toggle.clicked(pt):
             with state_lock: state["playing"] = not state["playing"]
         else:
